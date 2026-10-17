@@ -1,0 +1,7 @@
+Jar bouwen zonder iets te installeren (via GitHub):
+1. Maak een gratis account op github.com en klik "New repository" (naam: orevein, Public).
+2. Klik "uploading an existing file" en sleep ALLE bestanden en mappen uit deze map erin
+   (let op: ook de verborgen map .github moet mee, zie het stappenplan in de chat).
+3. Klik "Commit changes". Ga naar het tabblad "Actions": de build start vanzelf (duurt ~3 min).
+4. Open de afgeronde build, download onderaan "Artifacts" -> zip uitpakken -> orevein-1.0.0.jar.
+5. Zet de jar in je Modrinth-profiel (Fabric, Minecraft 26.3) en zorg dat Fabric API erin zit.

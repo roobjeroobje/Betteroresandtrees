@@ -1,0 +1,19 @@
+{
+	"schemaVersion": 1,
+	"id": "orevein",
+	"version": "${version}",
+	"name": "Ore Vein + Tree Miner",
+	"description": "Hak 1 ore of 1 boomstam en de hele vein/boom breekt mee. Altijd actief, geen shift nodig.",
+	"authors": ["Jij"],
+	"license": "CC0-1.0",
+	"environment": "*",
+	"entrypoints": {
+		"main": ["nl.orevein.OreVein"]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.5",
+		"minecraft": "~26.3",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
