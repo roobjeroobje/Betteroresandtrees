@@ -29,12 +29,15 @@ import java.util.List;
 import java.util.Queue;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * Ore Vein Miner + Tree Feller (Fabric, Minecraft 26.3).
  * - Altijd actief, geen shift nodig. Pickaxe voor ores, bijl voor bomen.
  * - 1 durability per ore / per stam.
  * - Blokken verdwijnen geleidelijk (animatie) en met weinig geluid.
+ * - Boom: stammen eerst, vanaf de stam die je slaat; bladeren pas daarna.
+ * - Ores: iron ore + deepslate iron ore tellen als dezelfde vein (zelfde soort).
  * - Natuurlijke bomen vallen helemaal om; huizen blijven staan.
  */
 public class OreVein implements ModInitializer {
@@ -67,7 +70,7 @@ public class OreVein implements ModInitializer {
         final ServerLevel level;
         final UUID playerId;
         final BlockPos origin;
-        final Block target;
+        final Predicate<BlockState> matcher;
         final boolean tree;
         final ArrayDeque<Entry> queue;
         final Set<BlockPos> treeLogs;
@@ -75,12 +78,12 @@ public class OreVein implements ModInitializer {
         int blockCounter = 0;
         int leafCounter = 0;
 
-        Task(ServerLevel level, UUID playerId, BlockPos origin, Block target, boolean tree,
+        Task(ServerLevel level, UUID playerId, BlockPos origin, Predicate<BlockState> matcher, boolean tree,
              ArrayDeque<Entry> queue, Set<BlockPos> treeLogs) {
             this.level = level;
             this.playerId = playerId;
             this.origin = origin;
-            this.target = target;
+            this.matcher = matcher;
             this.tree = tree;
             this.queue = queue;
             this.treeLogs = treeLogs;
@@ -103,12 +106,13 @@ public class OreVein implements ModInitializer {
                 if (!tool.is(ItemTags.PICKAXES)) return;
                 if (!sp.hasCorrectToolForDrops(state)) return;
 
-                List<BlockPos> vein = collect(world, origin, state.getBlock(), MAX_ORE_BLOCKS);
+                Predicate<BlockState> oreMatch = oreMatcher(state.getBlock());
+                List<BlockPos> vein = collect(world, origin, oreMatch, MAX_ORE_BLOCKS);
                 if (vein.isEmpty()) return;
 
                 ArrayDeque<Entry> queue = new ArrayDeque<>();
                 for (BlockPos p : vein) queue.add(new Entry(p, true));
-                TASKS.add(new Task(world, sp.getUUID(), origin, state.getBlock(), false, queue, Set.of()));
+                TASKS.add(new Task(world, sp.getUUID(), origin, oreMatch, false, queue, Set.of()));
 
             } else if (state.is(BlockTags.LOGS)) {
                 if (!tool.is(ItemTags.AXES)) return;
@@ -161,7 +165,7 @@ public class OreVein implements ModInitializer {
         ItemStack tool = player.getMainHandItem();
 
         if (e.block()) {
-            if (s.getBlock() != t.target) return true; // blok is al weg
+            if (!t.matcher.test(s)) return true; // blok is al weg
             if (tool.isEmpty() || (tool.isDamageableItem() && tool.getDamageValue() >= tool.getMaxDamage() - 1)) {
                 return false; // gereedschap blijft heel
             }
@@ -207,7 +211,8 @@ public class OreVein implements ModInitializer {
      * Een crafting table, kist, fakkel of bord tegen de boom maakt niets uit.
      */
     private static Task planTree(ServerLevel world, ServerPlayer sp, BlockPos origin, Block logBlock) {
-        List<BlockPos> found = collect(world, origin, logBlock, MAX_LOG_BLOCKS);
+        Predicate<BlockState> logMatch = st -> st.getBlock() == logBlock;
+        List<BlockPos> found = collect(world, origin, logMatch, MAX_LOG_BLOCKS);
         Set<BlockPos> cluster = new HashSet<>(found);
         cluster.add(origin);
 
@@ -271,25 +276,28 @@ public class OreVein implements ModInitializer {
             }
         }
 
-        // Van boven naar beneden laten verdwijnen
+        // Eerst ALLE stammen, beginnend bij de stam die je slaat en dan naar buiten toe.
+        // Pas daarna verdwijnen de bladeren (ook van dichtbij naar ver weg).
+        List<BlockPos> logList = new ArrayList<>(comp);
+        logList.sort(Comparator.comparingInt(p -> distSq(origin, p)));
+        leaves.sort(Comparator.comparingInt(p -> distSq(origin, p)));
+
         List<Entry> entries = new ArrayList<>();
-        for (BlockPos p : comp) entries.add(new Entry(p, true));
+        for (BlockPos p : logList) entries.add(new Entry(p, true));
         for (BlockPos p : leaves) entries.add(new Entry(p, false));
-        entries.sort(Comparator.<Entry>comparingInt(e -> -e.pos().getY())
-                .thenComparingInt(e -> e.block() ? 0 : 1));
 
         ArrayDeque<Entry> deque = new ArrayDeque<>(entries);
         Set<BlockPos> felled = new HashSet<>(comp);
         felled.add(origin);
-        return new Task(world, sp.getUUID(), origin, logBlock, true, deque, felled);
+        return new Task(world, sp.getUUID(), origin, logMatch, true, deque, felled);
     }
 
     // =====================================================================
     //  Hulpfuncties
     // =====================================================================
 
-    /** Alle aan elkaar vastzittende blokken van hetzelfde type (incl. diagonaal). */
-    private static List<BlockPos> collect(ServerLevel world, BlockPos origin, Block target, int max) {
+    /** Alle aan elkaar vastzittende blokken die aan de voorwaarde voldoen (incl. diagonaal). */
+    private static List<BlockPos> collect(ServerLevel world, BlockPos origin, Predicate<BlockState> matcher, int max) {
         List<BlockPos> found = new ArrayList<>();
         Set<BlockPos> visited = new HashSet<>();
         Queue<BlockPos> queue = new ArrayDeque<>();
@@ -304,13 +312,30 @@ public class OreVein implements ModInitializer {
                 if (dx == 0 && dy == 0 && dz == 0) continue;
                 BlockPos next = cur.offset(dx, dy, dz);
                 if (!visited.add(next)) continue;
-                if (world.getBlockState(next).getBlock() != target) continue;
+                if (!matcher.test(world.getBlockState(next))) continue;
                 if (found.size() >= max) break;
                 found.add(next);
                 queue.add(next);
             }
         }
         return found;
+    }
+
+    private static int distSq(BlockPos a, BlockPos b) {
+        int dx = a.getX() - b.getX();
+        int dy = a.getY() - b.getY();
+        int dz = a.getZ() - b.getZ();
+        return dx * dx + dy * dy + dz * dz;
+    }
+
+    /** Zelfde ore, ook als er 'deepslate_' voor staat (iron_ore + deepslate_iron_ore = 1 vein). */
+    private static String oreKey(Block b) {
+        return BuiltInRegistries.BLOCK.getKey(b).toString().replace(":deepslate_", ":");
+    }
+
+    private static Predicate<BlockState> oreMatcher(Block origin) {
+        String key = oreKey(origin);
+        return st -> st.is(ConventionalBlockTags.ORES) && oreKey(st.getBlock()).equals(key);
     }
 
     private static boolean isNaturalLeaf(BlockState s) {
